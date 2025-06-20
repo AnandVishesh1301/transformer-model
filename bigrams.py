@@ -131,14 +131,14 @@ class Block(nn.Module):
         head_size = n_embd // n_head
         self.sa = MultiHeadAttention(n_head, head_size)
         self.ffwd = FeedFoward(n_embd)
-        # self.ln1 = nn.LayerNorm(n_embd)
-        # self.ln2 = nn.LayerNorm(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
 
     def forward(self, x):
         #x = self.sa(x)
         #x = self.ffwd(x)
-        x = x + self.sa(x) ## Fork off, performs some communicatoin
-        x = x + self.ffwd(x) ## Fork off, performs some computation
+        x = x + self.sa(self.ln1(x)) ## Fork off, performs some communicatoin
+        x = x + self.ffwd(self.ln2(x)) ## Fork off, performs some computation
         return x
 
 # super simple bigram model
@@ -152,7 +152,8 @@ class BigramLanguageModel(nn.Module):
         self.blocks = nn.Sequential(
             Block(n_embd, n_head=4),  # using 4 heads of self-attention
             Block(n_embd, n_head=4),
-            Block(n_embd, n_head=4)
+            Block(n_embd, n_head=4),
+            nn.LayerNorm(n_embd),  # final layer normalization
         )
         #self.sa_head = Head(n_embd) # single head of self-attention
         self.sa_head = MultiHeadAttention(4, n_embd//4) ## 4 heads of 8-dimensional self-attention, opr 4 communication channels running parallely
