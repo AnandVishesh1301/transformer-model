@@ -75,7 +75,7 @@ class Head(nn.Module):
         self.value = nn.Linear(n_embd, head_size, bias=False)
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
 
-        #self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         # input of size (batch, time-step, channels)
@@ -87,7 +87,7 @@ class Head(nn.Module):
         wei = q @ k.transpose(-2,-1) * C**-0.5 # (B, T, hs) @ (B, hs, T) -> (B, T, T)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
         wei = F.softmax(wei, dim=-1) # (B, T, T)
-        #wei = self.dropout(wei)
+        wei = self.dropout(wei)
         # perform the weighted aggregation of the values
         v = self.value(x) # (B,T,hs)
         out = wei @ v # (B, T, T) @ (B, T, hs) -> (B, T, hs)
@@ -100,11 +100,11 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
         self.proj = nn.Linear(n_embd, n_embd)
-        # self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         out = torch.cat([h(x) for h in self.heads], dim=-1)
-        out = self.proj(out) 
+        out = self.dropout(self.proj(out)) 
         return out
 
 class FeedFoward(nn.Module):
@@ -116,7 +116,7 @@ class FeedFoward(nn.Module):
             nn.Linear(n_embd,4 * n_embd),
             nn.ReLU(),
             nn.Linear(4 * n_embd, n_embd),  # project back to embedding size
-            # nn.Dropout(dropout),
+            nn.Dropout(dropout),
         )
 
     def forward(self, x):
@@ -149,15 +149,17 @@ class BigramLanguageModel(nn.Module):
         # each token directly reads off the logits for the next token from a lookup table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        self.blocks = nn.Sequential(
-            Block(n_embd, n_head=4),  # using 4 heads of self-attention
-            Block(n_embd, n_head=4),
-            Block(n_embd, n_head=4),
-            nn.LayerNorm(n_embd),  # final layer normalization
-        )
+        # self.blocks = nn.Sequential(
+        #     Block(n_embd, n_head=4),  # using 4 heads of self-attention
+        #     Block(n_embd, n_head=4),
+        #     Block(n_embd, n_head=4),
+        #     nn.LayerNorm(n_embd),  # final layer normalization
+        # )
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)]) # 4 blocks of self-attention and feed-forward network
         #self.sa_head = Head(n_embd) # single head of self-attention
-        self.sa_head = MultiHeadAttention(4, n_embd//4) ## 4 heads of 8-dimensional self-attention, opr 4 communication channels running parallely
-        self.ffwd = FeedFoward(n_embd) # feed-forward network
+        #self.sa_head = MultiHeadAttention(4, n_embd//4) ## 4 heads of 8-dimensional self-attention, opr 4 communication channels running parallely
+        #self.ffwd = FeedFoward(n_embd) # feed-forward network
+        self.ln_f = nn.LayerNorm(n_embd) # final layer normalization
         self.ln_head = nn.Linear(n_embd, vocab_size)
     
     def forward(self, idx, targets=None):
@@ -171,6 +173,7 @@ class BigramLanguageModel(nn.Module):
         #x = self.sa_head(x) # applying one head of self attention, (B,T,C)
         #x = self.ffwd(x) # applying feed-forward network, (B,T,C)
         x = self.blocks(x) # applying multiple blocks of self attention and feed-forward network, (B,T,C)
+        x = self.ln_f(x) # final layer normalization, (B,T,C)
         logits = self.ln_head(x) # (B,T,vocab_size)
         
         if targets is None:
